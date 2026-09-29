@@ -87,8 +87,7 @@ sub report_step1 {
 
     my $template = $self->get_template( { file => 'report-step1.tt' } );
 
-    print $cgi->header();
-    print $template->output();
+    $self->output_html($template->output());
 }
 
 sub report_step2 {
@@ -251,8 +250,7 @@ WHERE  1
         overdues => $overdues,
     );
 
-    print $cgi->header();
-    print $template->output();
+    $self->output_html($template->output());
 }
 
 1;
