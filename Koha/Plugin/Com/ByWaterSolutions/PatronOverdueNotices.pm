@@ -109,22 +109,16 @@ sub report_step2 {
     my @loststatuses      = $cgi->multi_param('loststatuses');
     my @itemtypes         = $cgi->multi_param('itemtypes');
 
+    my %valid_branchcode_fields = ( holdingbranch => 1, homebranch => 1 );
+    $branchcode_field = $valid_branchcode_fields{$branchcode_field} ? $branchcode_field : 'homebranch';
+
     ( $days_from, $days_to ) = ( $days_to, $days_from )
       if ( $days_to > $days_from );
-
-    @categorycodes = map { qq{'$_'} } @categorycodes;
-    my $categorycodes = join( ',', @categorycodes );
-
-    @loststatuses = map { qq{'$_'} } @loststatuses;
-    my $loststatuses = join( ',', @loststatuses );
-
-    @itemtypes = map { qq{'$_'} } @itemtypes;
-    my $itemtypes = join( ',', @itemtypes );
 
     my $dbh   = C4::Context->dbh();
     my $query = qq{
         SELECT
-            a.amountoutstanding,
+            ( SELECT SUM(amountoutstanding) FROM accountlines WHERE borrowernumber = borrowers.borrowernumber ) AS amountoutstanding,
             biblio.title,
             borrowers.zipcode,
             borrowers.address,
@@ -151,7 +145,6 @@ sub report_step2 {
             items.onloan
 
 FROM   issues
-       LEFT JOIN accountlines a USING ( borrowernumber )
        LEFT JOIN items
               ON ( issues.itemnumber = items.itemnumber )
        LEFT JOIN biblio USING ( biblionumber )
@@ -177,7 +170,9 @@ WHERE  1
     ## FIXME else limit by patron branchcode?
 
     if (@categorycodes) {
-        $query .= qq{ AND borrowers.categorycode IN ( $categorycodes ) };
+        my $placeholders = join( ',', ('?') x @categorycodes );
+        $query .= qq{ AND borrowers.categorycode IN ( $placeholders ) };
+        push( @params, @categorycodes );
     }
 
     if ( $patron_id ) {
@@ -190,23 +185,25 @@ WHERE  1
     }
 
     if ( @itemtypes ) {
-        $query .= qq{ AND items.itype IN ( $itemtypes ) };
+        my $placeholders = join( ',', ('?') x @itemtypes );
+        $query .= qq{ AND items.itype IN ( $placeholders ) };
+        push( @params, @itemtypes );
     }
 
     if ( @loststatuses ) {
-        $query .= qq{ AND items.itemlost NOT IN ( $loststatuses ) };
+        my $placeholders = join( ',', ('?') x @loststatuses );
+        $query .= qq{ AND items.itemlost NOT IN ( $placeholders ) };
+        push( @params, @loststatuses );
     }
 
-    $query .= qq{ GROUP BY issues.issue_id };
-
     if ( $fines_from && $fines_to ) {
-        $query .= qq{ HAVING SUM(a.amountoutstanding) >= ? AND SUM(a.amountoutstanding) <= ? };
+        $query .= qq{ AND ( SELECT SUM(amountoutstanding) FROM accountlines WHERE borrowernumber = borrowers.borrowernumber ) BETWEEN ? AND ? };
         push( @params, $fines_from, $fines_to );
     } elsif ( $fines_from ) {
-        $query .= qq{ HAVING SUM(a.amountoutstanding) >= ?};
+        $query .= qq{ AND ( SELECT SUM(amountoutstanding) FROM accountlines WHERE borrowernumber = borrowers.borrowernumber ) >= ? };
         push( @params, $fines_from );
     } elsif ( $fines_to ) {
-        $query .= qq{ HAVING SUM(a.amountoutstanding) <= ?};
+        $query .= qq{ AND ( SELECT SUM(amountoutstanding) FROM accountlines WHERE borrowernumber = borrowers.borrowernumber ) <= ? };
         push( @params, $fines_to );
     }
 
